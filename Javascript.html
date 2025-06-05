@@ -1,0 +1,608 @@
+<script>
+  // Global variables
+  let currentEmployeeData = null;
+  let currentLocation = null;
+  let cameraStream = null;
+  let photoBlob = null;
+  let selectedClockStatus = null;
+  let isLocationValid = false;
+
+  // Initialize the page
+  document.addEventListener('DOMContentLoaded', function() {
+    console.log("DOM loaded, initializing app...");
+    loadEmployeeList();
+    loadDepartmentList();
+    loadShiftList();
+    setupEventListeners();
+    startDigitalClock();
+  });
+
+  // ฟังก์ชันแสดงนาฬิกาดิจิตอล
+  function startDigitalClock() {
+    const updateClock = function() {
+      const now = new Date();
+      
+      // รูปแบบเวลา HH:MM:SS
+      const hours = now.getHours().toString().padStart(2, '0');
+      const minutes = now.getMinutes().toString().padStart(2, '0');
+      const seconds = now.getSeconds().toString().padStart(2, '0');
+      
+      // อัปเดตนาฬิกา
+      const clockElement = document.getElementById('digital-clock');
+      if (clockElement) {
+        clockElement.textContent = `${hours}:${minutes}:${seconds}`;
+      }
+      
+      // อัปเดตวันที่ปัจจุบัน
+      const dateElement = document.getElementById('current-date');
+      if (dateElement) {
+        const date = now.getDate().toString().padStart(2, '0');
+        const month = (now.getMonth() + 1).toString().padStart(2, '0');
+        const year = now.getFullYear();
+        
+        dateElement.textContent = `${date}-${month}-${year}`;
+      }
+    };
+    
+    // อัปเดตทุก 1 วินาที
+    updateClock();
+    setInterval(updateClock, 1000);
+  }
+
+  // Load employee list
+  function loadEmployeeList() {
+    console.log("Loading employees...");
+    google.script.run
+      .withSuccessHandler(function(employees) {
+        console.log("Received employees:", employees.length);
+        const select = document.getElementById('employee-select');
+        select.innerHTML = '<option value="">Select Employee</option>';
+        
+        employees.forEach(employee => {
+          const option = document.createElement('option');
+          option.value = JSON.stringify(employee);
+          option.text = employee.fullName;
+          select.appendChild(option);
+        });
+      })
+      .withFailureHandler(function(error) {
+        console.error("Error loading employees:", error);
+        handleError(error);
+      })
+      .getEmployeeList();
+  }
+
+  // Load department list
+  function loadDepartmentList() {
+    console.log("Loading departments...");
+    google.script.run
+      .withSuccessHandler(function(departments) {
+        console.log("Received departments:", departments.length);
+        const select = document.getElementById('department-select');
+        select.innerHTML = '<option value="">Select Department</option>';
+        
+        departments.forEach(department => {
+          const option = document.createElement('option');
+          option.value = department;
+          option.text = department;
+          select.appendChild(option);
+        });
+      })
+      .withFailureHandler(function(error) {
+        console.error("Error loading departments:", error);
+        handleError(error);
+      })
+      .getDepartments();
+  }
+
+  // Load shift list - แสดงเฉพาะ ShiftName
+  function loadShiftList() {
+    console.log("Loading shifts...");
+    google.script.run
+      .withSuccessHandler(function(shifts) {
+        console.log("Shifts received:", shifts);
+        const select = document.getElementById('shift-select');
+        select.innerHTML = '<option value="">Select Work Shift</option>';
+        
+        if (Array.isArray(shifts) && shifts.length > 0) {
+          shifts.forEach(shift => {
+            try {
+              const option = document.createElement('option');
+              
+              if (typeof shift === 'object') {
+                // แสดงเฉพาะ ShiftName
+                option.value = JSON.stringify({
+                  shiftName: shift.shiftName,
+                  shiftId: shift.shiftId || "",
+                  startTime: shift.startTime || "",
+                  endTime: shift.endTime || ""
+                });
+                option.text = shift.shiftName;
+              } else {
+                option.value = JSON.stringify({ shiftName: shift });
+                option.text = shift;
+              }
+              
+              select.appendChild(option);
+            } catch (e) {
+              console.error("Error adding shift option:", e);
+            }
+          });
+        } else {
+          console.warn("No shifts data received or invalid format");
+          alert("No work shifts found. Please check the Shifts sheet in your spreadsheet.");
+        }
+      })
+      .withFailureHandler(function(error) {
+        console.error("Error loading shifts:", error);
+        handleError(error);
+      })
+      .getShifts();
+  }
+
+  // Setup event listeners
+  function setupEventListeners() {
+    // Employee select change
+    document.getElementById('employee-select').addEventListener('change', function(e) {
+      if (this.value) {
+        try {
+          currentEmployeeData = JSON.parse(this.value);
+          document.getElementById('employee-name').textContent = currentEmployeeData.fullName;
+          
+          if (currentEmployeeData.department) {
+            document.getElementById('department-select').value = currentEmployeeData.department;
+            document.getElementById('employee-department').textContent = currentEmployeeData.department;
+          }
+          
+          document.getElementById('employee-position').textContent = currentEmployeeData.position || 'N/A';
+          
+          validateForm();
+        } catch (err) {
+          console.error("Error parsing employee data:", err);
+          resetEmployeeInfo();
+        }
+      } else {
+        resetEmployeeInfo();
+        validateForm();
+      }
+    });
+    
+    // Department select change
+    document.getElementById('department-select').addEventListener('change', function(e) {
+      if (this.value) {
+        document.getElementById('employee-department').textContent = this.value;
+      } else {
+        document.getElementById('employee-department').textContent = '-';
+      }
+      validateForm();
+    });
+    
+    // Shift select change
+    document.getElementById('shift-select').addEventListener('change', function() {
+      try {
+        if (this.value) {
+          const shiftData = JSON.parse(this.value);
+          console.log("Selected shift - Name:", shiftData.shiftName, "Time:", shiftData.startTime, "-", shiftData.endTime);
+        }
+      } catch (e) {
+        console.error("Error parsing selected shift:", e);
+      }
+      
+      validateForm();
+    });
+    
+    // Clock In button click
+    document.getElementById('clock-in-btn').addEventListener('click', function() {
+      selectedClockStatus = "ClockIn";
+      this.classList.add('selected');
+      document.getElementById('clock-out-btn').classList.remove('selected');
+      validateForm();
+    });
+    
+    // Clock Out button click
+    document.getElementById('clock-out-btn').addEventListener('click', function() {
+      selectedClockStatus = "ClockOut";
+      this.classList.add('selected');
+      document.getElementById('clock-in-btn').classList.remove('selected');
+      validateForm();
+    });
+    
+    // Load location button click
+    document.getElementById('load-location-btn').addEventListener('click', getLocation);
+    
+    // Camera buttons
+    document.getElementById('camera-on-btn').addEventListener('click', startCamera);
+    document.getElementById('take-photo-btn').addEventListener('click', takePhoto);
+    document.getElementById('retake-photo-btn').addEventListener('click', retakePhoto);
+    
+    // Save data button click
+    document.getElementById('save-data-btn').addEventListener('click', saveData);
+  }
+
+  // Reset employee info
+  function resetEmployeeInfo() {
+    document.getElementById('employee-name').textContent = '-';
+    document.getElementById('employee-department').textContent = '-';
+    document.getElementById('employee-position').textContent = '-';
+    currentEmployeeData = null;
+  }
+
+  // Validate form to enable/disable save button
+  function validateForm() {
+    const employeeSelect = document.getElementById('employee-select').value;
+    const departmentSelect = document.getElementById('department-select').value;
+    const shiftSelect = document.getElementById('shift-select').value;
+    
+    const isValid = employeeSelect && departmentSelect && shiftSelect && 
+                   selectedClockStatus && photoBlob && isLocationValid;
+    
+    document.getElementById('save-data-btn').disabled = !isValid;
+    
+    return isValid;
+  }
+
+  // Get user's current location
+  function getLocation() {
+    const locationDetails = document.getElementById('location-details');
+    const latitudeEl = document.getElementById('latitude');
+    const longitudeEl = document.getElementById('longitude');
+    const distanceEl = document.getElementById('distance');
+    
+    locationDetails.style.display = 'none';
+    latitudeEl.textContent = '-';
+    longitudeEl.textContent = '-';
+    distanceEl.textContent = '-';
+    
+    document.getElementById('load-location-btn').textContent = 'Loading...';
+    document.getElementById('load-location-btn').disabled = true;
+    
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        function(position) {
+          const latitude = position.coords.latitude;
+          const longitude = position.coords.longitude;
+          
+          google.script.run
+            .withSuccessHandler(function(result) {
+              currentLocation = {
+                latitude: latitude,
+                longitude: longitude,
+                distance: result.distance,
+                isValid: result.isValid,
+                locationName: result.locationName
+              };
+              
+              latitudeEl.textContent = latitude.toFixed(6);
+              longitudeEl.textContent = longitude.toFixed(6);
+              distanceEl.textContent = result.distance;
+              
+              locationDetails.style.display = 'block';
+              
+              isLocationValid = result.isValid;
+              
+              if (!result.isValid) {
+                alert(`Location check failed: ${result.message}\nYou are ${result.distance} meters away from the allowed location.`);
+              }
+              
+              validateForm();
+              document.getElementById('load-location-btn').textContent = 'Reload Location';
+              document.getElementById('load-location-btn').disabled = false;
+            })
+            .withFailureHandler(function(error) {
+              console.error("Location error:", error);
+              handleError(error);
+              document.getElementById('load-location-btn').textContent = 'Load Location';
+              document.getElementById('load-location-btn').disabled = false;
+            })
+            .checkLocationValidity(latitude, longitude);
+        },
+        function(error) {
+          console.error("Geolocation error:", error);
+          handleGeolocationError(error);
+          document.getElementById('load-location-btn').textContent = 'Load Location';
+          document.getElementById('load-location-btn').disabled = false;
+        }
+      );
+    } else {
+      alert("Geolocation is not supported by this browser.");
+      document.getElementById('load-location-btn').textContent = 'Load Location';
+      document.getElementById('load-location-btn').disabled = false;
+    }
+  }
+
+  // Handle geolocation errors
+  function handleGeolocationError(error) {
+    switch(error.code) {
+      case error.PERMISSION_DENIED:
+        alert("User denied the request for Geolocation.");
+        break;
+      case error.POSITION_UNAVAILABLE:
+        alert("Location information is unavailable.");
+        break;
+      case error.TIMEOUT:
+        alert("The request to get user location timed out.");
+        break;
+      case error.UNKNOWN_ERROR:
+        alert("An unknown error occurred.");
+        break;
+    }
+  }
+
+  // Start camera
+  function startCamera() {
+    const cameraFeed = document.getElementById('camera-feed');
+    const photoPreview = document.getElementById('photo-preview');
+    const takePhotoBtn = document.getElementById('take-photo-btn');
+    
+    if (cameraStream) {
+      stopCamera();
+      return;
+    }
+    
+    // ลองกล้องหลายแบบ โดยเริ่มจากกล้องหน้าเป็นลำดับแรก
+    const constraints = [
+      { video: { facingMode: { exact: "user" } } }, // กล้องหน้า (exact)
+      { video: { facingMode: "user" } }, // กล้องหน้า (fallback)
+      { video: { facingMode: "environment" } }, // กล้องหลัง
+      { video: true } // กล้องใดก็ได้
+    ];
+    
+    function tryCamera(constraintIndex = 0) {
+      if (constraintIndex >= constraints.length) {
+        alert("No camera available on this device.");
+        return;
+      }
+      
+      navigator.mediaDevices.getUserMedia(constraints[constraintIndex])
+        .then(function(stream) {
+          cameraStream = stream;
+          cameraFeed.srcObject = stream;
+          cameraFeed.style.display = 'block';
+          photoPreview.style.display = 'none';
+          takePhotoBtn.disabled = false;
+          
+          document.getElementById('camera-on-btn').textContent = 'Camera Off';
+        })
+        .catch(function(error) {
+          console.log(`Camera constraint ${constraintIndex} failed:`, error);
+          // ลองกล้องแบบอื่น
+          tryCamera(constraintIndex + 1);
+        });
+    }
+    
+    // เริ่มลองกล้อง
+    tryCamera();
+  }
+
+  // Stop camera
+  function stopCamera() {
+    const cameraFeed = document.getElementById('camera-feed');
+    const photoPreview = document.getElementById('photo-preview');
+    const takePhotoBtn = document.getElementById('take-photo-btn');
+    
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      cameraStream = null;
+    }
+    
+    cameraFeed.style.display = 'none';
+    photoPreview.style.display = 'flex';
+    takePhotoBtn.disabled = true;
+    
+    document.getElementById('camera-on-btn').textContent = 'Camera On';
+  }
+
+  // Take photo
+  function takePhoto() {
+    const cameraFeed = document.getElementById('camera-feed');
+    const photoCanvas = document.getElementById('photo-canvas');
+    const photoPreview = document.getElementById('photo-preview');
+    
+    if (!cameraStream) {
+      alert('Please turn on the camera first.');
+      return;
+    }
+    
+    photoCanvas.width = cameraFeed.videoWidth;
+    photoCanvas.height = cameraFeed.videoHeight;
+    
+    const context = photoCanvas.getContext('2d');
+    context.drawImage(cameraFeed, 0, 0, photoCanvas.width, photoCanvas.height);
+    
+    photoBlob = photoCanvas.toDataURL('image/png');
+    
+    photoPreview.innerHTML = `<img src="${photoBlob}" alt="Captured photo">`;
+    photoPreview.style.display = 'flex';
+    cameraFeed.style.display = 'none';
+    
+    document.getElementById('retake-photo-btn').style.display = 'block';
+    document.getElementById('take-photo-btn').style.display = 'none';
+    
+    stopCamera();
+    
+    validateForm();
+  }
+
+  // Retake photo
+  function retakePhoto() {
+    const photoPreview = document.getElementById('photo-preview');
+    
+    photoBlob = null;
+    photoPreview.innerHTML = '<div class="no-photo-text">No photo taken yet</div>';
+    
+    document.getElementById('retake-photo-btn').style.display = 'none';
+    document.getElementById('take-photo-btn').style.display = 'block';
+    
+    startCamera();
+    
+    validateForm();
+  }
+
+  // Save attendance data
+  function saveData() {
+    if (!validateForm()) {
+      alert('Please complete all required fields.');
+      return;
+    }
+    
+    const loadingOverlay = document.getElementById('loading-overlay');
+    loadingOverlay.style.display = 'flex';
+    
+    const shiftSelect = document.getElementById('shift-select');
+    let shiftName = "";
+    let shiftId = "";
+    let startTime = "";
+    let endTime = "";
+    
+    try {
+      const shiftData = JSON.parse(shiftSelect.value);
+      
+      shiftName = shiftData.shiftName || "";
+      shiftId = shiftData.shiftId || "";
+      startTime = shiftData.startTime || "";
+      endTime = shiftData.endTime || "";
+      
+      console.log("Shift to be saved:");
+      console.log("- Name:", shiftName);
+      console.log("- Start Time:", startTime);
+      console.log("- End Time:", endTime);
+    } catch (e) {
+      console.error("Error parsing shift data:", e);
+      shiftName = shiftSelect.options[shiftSelect.selectedIndex].text;
+    }
+    
+    // ดึง Time Zone ที่เลือก
+    const timeZoneSelect = document.getElementById('timezone-select');
+    const selectedTimeZone = timeZoneSelect.value;
+    
+    const data = {
+      persNo: currentEmployeeData.persNo,
+      fullName: currentEmployeeData.fullName,
+      department: document.getElementById('department-select').value,
+      position: currentEmployeeData.position || "N/A",
+      shiftName: shiftName,
+      shiftId: shiftId,
+      startTime: startTime,
+      endTime: endTime,
+      clockStatus: selectedClockStatus,
+      photoBlob: photoBlob,
+      latitude: currentLocation.latitude,
+      longitude: currentLocation.longitude,
+      distance: currentLocation.distance,
+      locationName: currentLocation.locationName,
+      timeZone: selectedTimeZone
+    };
+    
+    console.log("Data to be sent to server:", {
+      persNo: data.persNo,
+      fullName: data.fullName,
+      shiftName: data.shiftName,
+      startTime: data.startTime,
+      endTime: data.endTime,
+      clockStatus: data.clockStatus,
+      timeZone: data.timeZone
+    });
+    
+    if (selectedClockStatus === "ClockOut") {
+      if (!confirm("Are you sure you want to clock out?")) {
+        loadingOverlay.style.display = 'none';
+        return;
+      }
+    }
+    
+    google.script.run
+      .withSuccessHandler(function(result) {
+        loadingOverlay.style.display = 'none';
+        
+        if (result.success) {
+          const statusMessage = `
+📢 New ${data.clockStatus} Recorded 📢
+👨‍✈️ Name         : ${data.fullName}
+📂 Department   : ${data.department}
+🧑‍💼 Position      : ${data.position}
+🕘 Work Shift   : ${data.shiftName}
+⏰ Work Time    : ${data.startTime} - ${data.endTime}
+✏️ Clock Status : ${data.clockStatus}
+⏰ Date/Time    : ${result.dateTime}
+🌐 Time Zone    : ${result.timeZone || "UTC"}
+📆 Date Format  : ${result.formattedDate || "N/A"}
+📍 Location     : ${data.latitude}, ${data.longitude}
+🚩 Distance     : ${data.distance} Meters
+⏳ OnDuty Status : ${result.statusDetails.status}${result.statusDetails.difference > 0 ? 
+`\n💼 ${result.statusDetails.status}   : ${result.statusDetails.difference} Minutes` : ''}
+`;
+          
+          showSuccessMessage(statusMessage);
+          
+          if (result.statusDetails.difference > 15) {
+            playAlertSound();
+          }
+          
+          resetForm();
+        } else {
+          alert("Error: " + result.message);
+        }
+      })
+      .withFailureHandler(function(error) {
+        loadingOverlay.style.display = 'none';
+        console.error("Save error:", error);
+        handleError(error);
+      })
+      .processTimeAttendance(data);
+  }
+
+  // Show success message
+  function showSuccessMessage(message) {
+    const successMessageElement = document.getElementById('success-message');
+    successMessageElement.textContent = message;
+    successMessageElement.style.display = 'block';
+    
+    setTimeout(function() {
+      successMessageElement.style.display = 'none';
+    }, 10000);
+  }
+
+  // Play alert sound
+  function playAlertSound() {
+    try {
+      const audio = new Audio('https://www.soundjay.com/buttons/sounds/beep-07.mp3');
+      audio.play().catch(function(e) {
+        console.log("Error playing sound:", e);
+      });
+    } catch (e) {
+      console.error("Error playing sound:", e);
+    }
+  }
+
+  // Reset the form
+  function resetForm() {
+    document.getElementById('employee-select').value = '';
+    document.getElementById('department-select').value = '';
+    document.getElementById('shift-select').value = '';
+    document.getElementById('clock-in-btn').classList.remove('selected');
+    document.getElementById('clock-out-btn').classList.remove('selected');
+    
+    photoBlob = null;
+    document.getElementById('photo-preview').innerHTML = '<div class="no-photo-text">No photo taken yet</div>';
+    document.getElementById('retake-photo-btn').style.display = 'none';
+    document.getElementById('take-photo-btn').style.display = 'block';
+    
+    currentLocation = null;
+    isLocationValid = false;
+    document.getElementById('location-details').style.display = 'none';
+    document.getElementById('latitude').textContent = '-';
+    document.getElementById('longitude').textContent = '-';
+    document.getElementById('distance').textContent = '-';
+    
+    resetEmployeeInfo();
+    
+    selectedClockStatus = null;
+    document.getElementById('save-data-btn').disabled = true;
+  }
+
+  // Handle errors
+  function handleError(error) {
+    console.error('Error:', error);
+    alert('An error occurred: ' + error);
+  }
+</script>

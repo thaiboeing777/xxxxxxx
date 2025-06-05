@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Time Attendance System</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+    }
+    
+    .form-container {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    
+    h1 {
+      text-align: center;
+      color: #333;
+    }
+    
+    .form-group {
+      margin-bottom: 15px;
+    }
+    
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    
+    select, input, button {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    
+    button {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    
+    button:hover {
+      background-color: #45a049;
+    }
+    
+    button:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+    }
+    
+    .time-display {
+      text-align: center;
+      margin: 20px 0;
+      font-size: 24px;
+      font-weight: bold;
+    }
+    
+    .clock-buttons {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 15px;
+    }
+    
+    .clock-buttons button {
+      flex: 1;
+      margin: 0 5px;
+    }
+    
+    .clock-buttons button.selected {
+      background-color: #357a38;
+    }
+    
+    #location-details {
+      margin-top: 10px;
+      padding: 10px;
+      background-color: #f9f9f9;
+      border-radius: 4px;
+      display: none;
+    }
+    
+    .location-info {
+      margin-bottom: 5px;
+    }
+    
+    #camera-feed {
+      width: 100%;
+      max-height: 300px;
+      margin: 10px 0;
+      display: none;
+    }
+    
+    #photo-preview {
+      width: 100%;
+      height: 200px;
+      margin: 10px 0;
+      border: 1px dashed #ddd;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+    }
+    
+    #photo-preview img {
+      max-width: 100%;
+      max-height: 100%;
+    }
+    
+    .no-photo-text {
+      color: #999;
+    }
+    
+    .employee-info {
+      margin-top: 20px;
+      padding: 10px;
+      background-color: #f9f9f9;
+      border-radius: 4px;
+    }
+    
+    #success-message {
+      margin-top: 20px;
+      padding: 15px;
+      background-color: #dff0d8;
+      border: 1px solid #d6e9c6;
+      border-radius: 4px;
+      color: #3c763d;
+      display: none;
+      white-space: pre-line;
+    }
+    
+    #loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+      display: none;
+    }
+    
+    .loading-spinner {
+      border: 5px solid #f3f3f3;
+      border-top: 5px solid #3498db;
+      border-radius: 50%;
+      width: 50px;
+      height: 50px;
+      animation: spin 2s linear infinite;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="form-container">
+    <h1>Time Attendance System</h1>
+    
+    <div class="time-display">
+      <div id="digital-clock">00:00:00</div>
+      <div id="current-date" style="font-size: 16px; color: #666;">DD-MM-YYYY</div>
+    </div>
+    
+    <div class="form-group">
+      <label for="employee-select">Employee:</label>
+      <select id="employee-select">
+        <option value="">Select Employee</option>
+      </select>
+    </div>
+    
+    <div class="form-group">
+      <label for="department-select">Department:</label>
+      <select id="department-select">
+        <option value="">Select Department</option>
+      </select>
+    </div>
+    
+    <div class="form-group">
+      <label for="shift-select">Work Shift:</label>
+      <select id="shift-select">
+        <option value="">Select Work Shift</option>
+      </select>
+    </div>
+    
+    <div class="form-group">
+      <label for="timezone-select">Time Zone:</label>
+      <select id="timezone-select">
+        <option value="UTC">UTC</option>
+        <option value="Asia/Bangkok" selected>Asia/Bangkok</option>
+        <option value="Asia/Dhaka">Asia/Dhaka (Bangladesh)</option>
+      </select>
+    </div>
+    
+    <div class="form-group">
+      <label>Clock Status:</label>
+      <div class="clock-buttons">
+        <button id="clock-in-btn">Clock In</button>
+        <button id="clock-out-btn">Clock Out</button>
+      </div>
+    </div>
+    
+    <div class="form-group">
+      <label>Location:</label>
+      <button id="load-location-btn">Load Location</button>
+      <div id="location-details">
+        <div class="location-info">Latitude: <span id="latitude">-</span></div>
+        <div class="location-info">Longitude: <span id="longitude">-</span></div>
+        <div class="location-info">Distance: <span id="distance">-</span> meters</div>
+      </div>
+    </div>
+    
+    <div class="form-group">
+      <label>Photo:</label>
+      <button id="camera-on-btn">Camera On</button>
+      <video id="camera-feed" autoplay playsinline></video>
+      <div id="photo-preview">
+        <div class="no-photo-text">No photo taken yet</div>
+      </div>
+      <canvas id="photo-canvas" style="display: none;"></canvas>
+      <div>
+        <button id="take-photo-btn" disabled>Take Photo</button>
+        <button id="retake-photo-btn" style="display: none;">Retake Photo</button>
+      </div>
+    </div>
+    
+    <div class="employee-info">
+      <div>Employee: <span id="employee-name">-</span></div>
+      <div>Department: <span id="employee-department">-</span></div>
+      <div>Position: <span id="employee-position">-</span></div>
+    </div>
+    
+    <button id="save-data-btn" disabled>Save Attendance</button>
+    
+    <div id="success-message"></div>
+  </div>
+  
+  <div id="loading-overlay">
+    <div class="loading-spinner"></div>
+  </div>
+  
+  <?!= include('JavaScript'); ?>
+</body>
+</html>
